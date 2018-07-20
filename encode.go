@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/lib/pq/oid"
 )
@@ -90,6 +92,18 @@ func binaryDecode(parameterStatus *parameterStatus, s []byte, typ oid.Oid) inter
 	panic("not reached")
 }
 
+// TODO: move elsewhere?
+// This will create a "string" for a byte slice.
+// WARNING: this will not copy the underlying memory, so you CANNOT pass these
+// up layers in the stack. This is useful **specificall** for the case of passing
+// a []byte to a parse method that takes a string -- as it will read the data and
+// make a copy elsewhere. USE WITH CAUTION
+func BytesToString(b []byte) string {
+	bh := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	sh := reflect.StringHeader{bh.Data, bh.Len}
+	return *(*string)(unsafe.Pointer(&sh))
+}
+
 func textDecode(parameterStatus *parameterStatus, s []byte, typ oid.Oid) interface{} {
 	switch typ {
 	case oid.T_char, oid.T_varchar, oid.T_text:
@@ -101,9 +115,9 @@ func textDecode(parameterStatus *parameterStatus, s []byte, typ oid.Oid) interfa
 		}
 		return b
 	case oid.T_timestamptz:
-		return parseTs(parameterStatus.currentLocation, string(s))
+		return parseTs(parameterStatus.currentLocation, BytesToString(s))
 	case oid.T_timestamp, oid.T_date:
-		return parseTs(nil, string(s))
+		return parseTs(nil, BytesToString(s))
 	case oid.T_time:
 		return mustParse("15:04:05", typ, s)
 	case oid.T_timetz:
@@ -111,7 +125,7 @@ func textDecode(parameterStatus *parameterStatus, s []byte, typ oid.Oid) interfa
 	case oid.T_bool:
 		return s[0] == 't'
 	case oid.T_int8, oid.T_int4, oid.T_int2:
-		i, err := strconv.ParseInt(string(s), 10, 64)
+		i, err := strconv.ParseInt(BytesToString(s), 10, 64)
 		if err != nil {
 			errorf("%s", err)
 		}
@@ -121,7 +135,7 @@ func textDecode(parameterStatus *parameterStatus, s []byte, typ oid.Oid) interfa
 		if typ == oid.T_float4 {
 			bits = 32
 		}
-		f, err := strconv.ParseFloat(string(s), bits)
+		f, err := strconv.ParseFloat(BytesToString(s), bits)
 		if err != nil {
 			errorf("%s", err)
 		}
